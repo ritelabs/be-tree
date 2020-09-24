@@ -1,6 +1,21 @@
 [package]
 name = "be-tree"
 version = "0.1.0"
-authors = ["Dan Hulme <dan@five.ai>"]
+authors = ["Dan Hulme <dan@five.ai>", "Chojan Shang <psiace@outlook.com>"]
+description = "B𝛆 Tree library in Rust."
+homepage = "https://github.com/psiace/be-tree"
+repository = "https://github.com/psiace/be-tree"
+readme = "README.md"
+keywords = ["be-tree", "b𝛆", "tree"]
+categories = ["data-structures"]
+license = "MIT/Apache-2.0"
+edition = "2018"
+
+include = [
+  "Cargo.toml",
+  "LICENSE-APACHE",
+  "LICENSE-MIT",
+  "src/**/*"
+]
 
 [dependencies]
