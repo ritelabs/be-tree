@@ -1,29 +1,31 @@
-use std::ptr;
 use std::mem;
+use std::ptr;
 
-const max_values_per_leaf: usize = 4;
+const MAX_VALUES_PER_LEAF: usize = 4;
 
 /* A pivot is a key and a node of the subtree of values >= that key. */
 struct Pivot<K, V> {
     min_key: K,
-    child: Box<Node<K, V>>
+    child: Box<Node<K, V>>,
 }
 
 struct LeafNode<K, V> {
-    elements: [(K, V); max_values_per_leaf],
-    // must be <= max_values_per_leaf
+    elements: [(K, V); MAX_VALUES_PER_LEAF],
+    // must be <= MAX_VALUES_PER_LEAF
     len: usize,
 }
 
-impl<K, V> LeafNode<K, V> where K: Copy, V: Clone {
+impl<K, V> LeafNode<K, V>
+where
+    K: Copy,
+    V: Clone,
+{
     fn empty() -> Self {
-        unsafe {
-            Self { elements: mem::uninitialized(), len: 0 }
-        }
+        unsafe { Self { elements: mem::MaybeUninit::uninit().assume_init(), len: 0 } }
     }
 
     fn from(items: &[(K, V)]) -> Self {
-        debug_assert!(items.len() <= max_values_per_leaf);
+        debug_assert!(items.len() <= MAX_VALUES_PER_LEAF);
         let mut result = Self::empty();
         result.elements.clone_from_slice(items);
         result
@@ -39,15 +41,18 @@ impl<K, V> LeafNode<K, V> where K: Copy, V: Clone {
 }
 
 struct BranchNode<K, V> {
-    pivots: [Pivot<K, V>; max_values_per_leaf],
-    // must be <= max_values_per_leaf and > 1
+    pivots: [Pivot<K, V>; MAX_VALUES_PER_LEAF],
+    // must be <= MAX_VALUES_PER_LEAF and > 1
     len: usize,
 }
 
-impl<K, V> BranchNode<K, V> where K: Copy {
+impl<K, V> BranchNode<K, V>
+where
+    K: Copy,
+{
     fn from(left: Pivot<K, V>, right: Pivot<K, V>) -> Self {
         unsafe {
-            let mut result = Self { pivots: mem::uninitialized(), len: 2 };
+            let mut result = Self { pivots: mem::MaybeUninit::uninit().assume_init(), len: 2 };
             result.pivots[0] = left;
             result.pivots[1] = right;
             result
@@ -62,19 +67,22 @@ impl<K, V> BranchNode<K, V> where K: Copy {
     }
 }
 
-enum Node<K, V>
-{
+enum Node<K, V> {
     Branch(BranchNode<K, V>),
-    Leaf(LeafNode<K, V>)
+    Leaf(LeafNode<K, V>),
 }
 
-impl<K, V> Node<K, V> where K: Copy + Ord, V: Clone {
+impl<K, V> Node<K, V>
+where
+    K: Copy + Ord,
+    V: Clone,
+{
     fn min_key(&self) -> K {
         match *self {
             Node::Branch(ref branch) => {
                 debug_assert!(branch.len > 1);
                 branch.pivots[0].min_key
-            },
+            }
             Node::Leaf(ref leaf) => {
                 debug_assert_ne!(leaf.len, 0);
                 leaf.elements[0].0
@@ -92,10 +100,11 @@ impl<K, V> Node<K, V> where K: Copy + Ord, V: Clone {
                         let pivot = &mut branch.pivots[i];
                         pivot.min_key = key;
                         pivot.child.insert(key, value)
-                    },
+                    }
                     // o/w, insert a new leaf at the end
                     None => {
-                        branch.pivots[branch.len] = Pivot {min_key: key, child: Box::new(Node::Leaf(LeafNode::empty()))};
+                        branch.pivots[branch.len] =
+                            Pivot { min_key: key, child: Box::new(Node::Leaf(LeafNode::empty())) };
                         branch.len += 1
                         // XXX consider splitting branch
                     }
@@ -105,28 +114,28 @@ impl<K, V> Node<K, V> where K: Copy + Ord, V: Clone {
             Node::Leaf(ref mut leaf) => {
                 let index = leaf.valid_elements_mut().binary_search_by_key(&key, |&(k, _)| k);
                 match index {
-                    Err(i) => { // key is absent, true insert
-                        if leaf.len < max_values_per_leaf {
+                    Err(i) => {
+                        // key is absent, true insert
+                        if leaf.len < MAX_VALUES_PER_LEAF {
                             // there's space left, just insert
-                            unsafe {
-                                slice_insert(leaf.valid_elements_mut(), i, (key, value))
-                            }
+                            unsafe { slice_insert(leaf.valid_elements_mut(), i, (key, value)) }
                             leaf.len += 1;
                             None
                         } else {
                             // must split the node: create the new node here
                             let new_branch = {
-                                let (left, right) = leaf.valid_elements_mut().split_at(max_values_per_leaf / 2);
+                                let (left, right) =
+                                    leaf.valid_elements_mut().split_at(MAX_VALUES_PER_LEAF / 2);
                                 let left_leaf = Box::new(Node::Leaf(LeafNode::from(left)));
                                 let right_leaf = Box::new(Node::Leaf(LeafNode::from(right)));
                                 Node::Branch(BranchNode::from(
                                     Pivot { min_key: left_leaf.min_key(), child: left_leaf },
-                                    Pivot { min_key: right_leaf.min_key(), child: right_leaf }
+                                    Pivot { min_key: right_leaf.min_key(), child: right_leaf },
                                 ))
                             };
                             Some(new_branch)
                         }
-                    },
+                    }
                     // key is present, replace
                     Ok(i) => {
                         leaf.elements[i] = (key, value);
@@ -144,29 +153,25 @@ impl<K, V> Node<K, V> where K: Copy + Ord, V: Clone {
         match *self {
             Node::Branch(ref mut branch) => {
                 // Find a child node whose keys are not before the target key
-                match branch.valid_pivots_mut().iter_mut().find(|ref p| key <= p.min_key) {
-                    Some(ref mut pivot) => {
-                        // If there is one, delete from it and update the pivot key
-                        pivot.child.delete(key);
-                        pivot.min_key = pivot.child.min_key()
-                    },
-                    // o/w, nothing to do
-                    None => ()
+                if let Some(ref mut pivot) =
+                    branch.valid_pivots_mut().iter_mut().find(|ref p| key <= p.min_key)
+                {
+                    // If there is one, delete from it and update the pivot key
+                    pivot.child.delete(key);
+                    pivot.min_key = pivot.child.min_key()
                 }
             }
             Node::Leaf(ref mut leaf) if leaf.len > 0 => {
                 let index = leaf.valid_elements_mut().binary_search_by_key(&key, |&(k, _)| k);
                 match index {
                     Err(_) => (),
-                    Ok(i) => {
-                        unsafe {
-                            slice_remove(leaf.valid_elements_mut(), i);
-                            leaf.len -= 1;
-                        }
-                    }
+                    Ok(i) => unsafe {
+                        slice_remove(leaf.valid_elements_mut(), i);
+                        leaf.len -= 1;
+                    },
                 }
             }
-            _ => ()
+            _ => (),
         }
     }
 
@@ -178,28 +183,28 @@ impl<K, V> Node<K, V> where K: Copy + Ord, V: Clone {
                     Some(ref pivot) => {
                         // If there is one, query it
                         pivot.child.get(key)
-                    },
+                    }
                     // o/w, the key doesn't exist
-                    None => None
+                    None => None,
                 }
             }
             Node::Leaf(ref leaf) if leaf.len > 0 => {
                 let index = leaf.valid_elements().binary_search_by_key(&key, |&(k, _)| k);
                 match index {
                     Err(_) => None,
-                    Ok(i) => Some(&leaf.elements[i].1)
+                    Ok(i) => Some(&leaf.elements[i].1),
                 }
             }
-            _ => None
+            _ => None,
         }
     }
 }
 
 unsafe fn slice_insert<T>(slice: &mut [T], idx: usize, val: T) {
     ptr::copy(
-        slice.as_ptr().offset(idx as isize),
+        slice.as_mut_ptr().add(idx),
         slice.as_mut_ptr().offset(idx as isize + 1),
-        slice.len() - idx
+        slice.len() - idx,
     );
     ptr::write(slice.get_unchecked_mut(idx), val);
 }
@@ -208,28 +213,32 @@ unsafe fn slice_remove<T>(slice: &mut [T], idx: usize) -> T {
     let ret = ptr::read(slice.get_unchecked(idx));
     ptr::copy(
         slice.as_ptr().offset(idx as isize + 1),
-        slice.as_mut_ptr().offset(idx as isize),
-        slice.len() - idx - 1
+        slice.as_mut_ptr().add(idx),
+        slice.len() - idx - 1,
     );
     ret
 }
 
 /// A map based on a B𝛆-tree
-pub struct BeTree< K, V > {
-    root: Node< K, V >
+pub struct BeTree<K, V> {
+    root: Node<K, V>,
 }
 
-impl<K, V> BeTree<K, V> where K: Copy + Ord, V: Clone {
+impl<K, V> BeTree<K, V>
+where
+    K: Copy + Ord,
+    V: Clone,
+{
     /// Create an empty B𝛆-tree.
-    pub fn new() -> Self { BeTree { root: Node::Leaf(LeafNode::empty()) } }
+    pub fn new() -> Self {
+        BeTree { root: Node::Leaf(LeafNode::empty()) }
+    }
 
     /// Clear the tree, removing all entries.
     pub fn clear(&mut self) {
         match self.root {
-            Node::Leaf(ref mut leaf) => {
-                leaf.len = 0
-            },
-            _ => { self.root = Node::Leaf(LeafNode::empty()) }
+            Node::Leaf(ref mut leaf) => leaf.len = 0,
+            _ => self.root = Node::Leaf(LeafNode::empty()),
         }
     }
 
@@ -237,29 +246,36 @@ impl<K, V> BeTree<K, V> where K: Copy + Ord, V: Clone {
     ///
     /// If the key is already present in the tree, the value is replaced. The key is not updated, though; this matters for
     /// types that can be `==` without being identical.
-    pub fn insert(&mut self, key: K, value: V)
-    {
+    pub fn insert(&mut self, key: K, value: V) {
         self.root.insert(key, value)
     }
 
     /// Remove a key (and its value) from the tree.
     ///
     /// If the key is not present, silently does nothing.
-    pub fn delete(&mut self, key: K)
-    {
+    pub fn delete(&mut self, key: K) {
         self.root.delete(key)
     }
 
     /// Retrieve a reference to the value corresponding to the key.
-    pub fn get(&self, key: K) -> Option<&V>
-    {
+    pub fn get(&self, key: K) -> Option<&V> {
         self.root.get(key)
+    }
+}
+
+impl<K, V> Default for BeTree<K, V>
+where
+    K: Copy + Ord,
+    V: Clone,
+{
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use BeTree;
+    use super::{BeTree, MAX_VALUES_PER_LEAF};
 
     #[test]
     fn can_construct() {
@@ -286,12 +302,12 @@ mod tests {
     #[test]
     fn can_split() {
         let mut b = BeTree::new();
-        // insert max_values_per_leaf + 1 items
-        for i in 0..::max_values_per_leaf {
+        // insert MAX_VALUES_PER_LEAF + 1 items
+        for i in 0..MAX_VALUES_PER_LEAF {
             b.insert(i, i);
         }
         // are they all there?
-        for i in 0..::max_values_per_leaf {
+        for i in 0..MAX_VALUES_PER_LEAF {
             assert_eq!(Some(&i), b.get(i));
         }
     }
